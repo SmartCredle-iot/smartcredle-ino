@@ -1,7 +1,10 @@
+#include <Thread.h>
+
 #include <Ultrasonic.h>
 #include <Ethernet.h>
 #include <SD.h>
 #include <SPI.h>
+#include <Servo.h>
 
 int  c   =  3830;    // 261 Hz 
 int  d   =  3400;    // 294 Hz 
@@ -30,16 +33,27 @@ char HTTP_req[TAMANHOCHAR] = {0}; //Oque o cliente esta fazendo de REQUEST; nº 
 char req_index = 0; //variavel para ajudar a ler o HTTP_req;
 
 //Define os pinos
-const int LM35       = A0;
-const int LDR        = A1;
+const int pinoSensor = A0;
 const int pinoBuzzer = 3;
+const int pinoTrig   = 5;
+const int pinoEcho   = 6;
+const int pinoServo  = 7;
+const int pinoLed    = 8;
 
-Ultrasonic ultrasonic(1,2); //Verificar para trocar a porta...
+Ultrasonic ultrasonic(pinoTrig, pinoEcho); //Verificar para trocar a porta...
 
+Servo Servo1; //Identifica um objeto do tipo Servo chamado Servo1
+
+Thread myThreadServer = Thread();
+Thread myThreadMusica = Thread();
 
 //VARIAVEIS DE CONTROLE LIGADO/DESLIGADO
-int iMusica = 0;
-int iBerco  = 0;
+int iMusica    = 0;
+int iBerco     = 0;
+int iStatusLed = 0;
+
+int Recebido; //Variável que armazenará o valor recebido pela serial
+int posicao; //Variável que armazenará as posições do servo
 
 char ComparaSTR(char *str, char *sFind){
   char found = 0;
@@ -69,10 +83,15 @@ char ComparaSTR(char *str, char *sFind){
 
 int verificaBerco(){
    boolean resp = false; 
-   float cmSec  = ultrasonic.Ranging(CM);
-   if (cmSec >= 30) {
+   float cmSec  = 0;
+   
+   cmSec = ultrasonic.Ranging(CM);
+
+   Serial.println("Centimetro:  ");
+   Serial.print(cmSec);
+   if (cmSec >= 10) {
      resp = 0;
-   } else if (cmSec < 24) { 
+   } else if (cmSec < 10) { 
      resp = 1; 
    } 
 
@@ -117,59 +136,84 @@ void playNote(char note, int duration) {
 }
 
 void tocaMusica(){
-   char notes[] = "ccggaag ffeeddc ggffeed ggffeed ccggaag ffeeddc "; 
-   int beats[]  = { 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 4 };
-   int tempo    = 250;
-   int iTamanho = 15;
+   Serial.println("iniciou");
+   if (iMusica == 0) { 
+      char notes[] = "ccggaag ffeeddc ggffeed ggffeed ccggaag ffeeddc "; 
+      int beats[]  = { 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 4 };
+      int tempo    = 250;
+      int iTamanho = 15;
      
-   for (int i = 0; i < iTamanho; i++) {      
-       if (notes[i] == ' ') {
-         delay(beats[i] * tempo); // rest
-       } else {
-         playNote(notes[i], beats[i] * tempo);
+      iMusica = 1; 
+      for (int i = 0; i < iTamanho; i++) {      
+          if (notes[i] == ' ') {
+            delay(beats[i] * tempo); // rest
+          } else {
+            playNote(notes[i], beats[i] * tempo);
+          }
+        
+          // pause between notes
+          delay(tempo / 2); 
        }
-      
-       // pause between notes
-       delay(tempo / 2); 
-    }
+   } else {
+      iMusica = 0; 
+      digitalWrite(pinoBuzzer, LOW);
+   }
+
+   delay(500);  
+   Serial.println("final");
 }
 
-void setup() {
-  analogReference(INTERNAL);
-  pinMode(pinoBuzzer, OUTPUT);
+
+void ligaMotor(){  
   
-  // inicia modulo ethernet...
-  Ethernet.begin(mac,ip);
-  server.begin();
-  Serial.begin(9600);
-  Serial.println("iniciou");
-
-  //inicia modulo de cartao SD...
- // Serial.println("Inicializando cartao SD");
- // if (!SD.begin(4)) {  //porta 4 é padrao do SD
- //    Serial.println("ERRO - nao leo o cartao SD");  
- //    return;
- // } else {
- //    Serial.println("Leu o cartao");
-
- //    if (!SD.exists("index.htm")){
- //       Serial.println("arquivo nao encontrado");
- //       return; 
- //    } else {
- //       Serial.println("Encontrado arquivo index.html"); 
- //    }  
- // }  
-
+ for(posicao = 90; posicao<110; posicao+=5){
+    Servo1.write(posicao);
+    Serial.println(posicao);
+    delay(500);  
+  }
+  for(posicao = 110; posicao>=60; posicao-=5){
+    Servo1.write(posicao);
+    Serial.println(posicao);
+    delay(500);  
+  }
   
-
-}
-
-void loop(){
-   EthernetClient client = server.available();  //Tratar cliente, verifica se possui um cliente
-
-   verificaBerco();
+  for(posicao = 70; posicao<90; posicao+=5){
+    Servo1.write(posicao);
+    Serial.println(posicao);
+    delay(500);  
+  }
    
+}
 
+void statusLed(){
+   if (iStatusLed == 0){
+      digitalWrite(pinoLed, HIGH); 
+      iStatusLed = 1;
+   } else {
+      digitalWrite(pinoLed, LOW);
+      iStatusLed = 0;  
+   }     
+}
+
+int statusPorta(){
+    int valorSensor = 0;
+    valorSensor = analogRead(pinoSensor);
+    //int valorCorrigido = (valorSensor * 5) / 1024;
+    //Serial.println(valorSensor);
+  
+    if(valorSensor > 0){
+        Serial.println("Porta Aberta!!!");  
+        Serial.print(valorSensor);      
+    
+    }else if (valorSensor == 0){
+        Serial.println("Porta fechada!!!"); 
+        Serial.print(valorSensor);    
+    }
+  
+}
+
+void threadServer(){
+   EthernetClient client = server.available();  //Tratar cliente, verifica se possui um cliente
    if (client){
       boolean currentLineIsBlank = true; //ajuda a verificar se o cliente ja parrou de enviar notificação.
 
@@ -196,11 +240,17 @@ void loop(){
                if (ComparaSTR(HTTP_req, "ajax_lerDados")){
                   lerDados(client);                
                } else if (ComparaSTR(HTTP_req, "ajax_statusMusica")){
-                  //liga/desliga a musica                
+                  tocaMusica();                       
                } else if (ComparaSTR(HTTP_req, "ajax_statusBercario")){
-                  //liga/desliga o berço musica                
+                  if (verificaBerco()){
+                     Serial.println("ta no berco"); 
+                  } else {
+                     Serial.println("nao ta no berco");                                             
+                  }                                 
                } else if (ComparaSTR(HTTP_req, "ajax_statusLuz")){
-                  //liga/desliga LUZ                
+                  statusLed();              
+               } else if (ComparaSTR(HTTP_req, "ajax_movimentaBerco")){
+                  ligaMotor();               
                } else {                                 
                   client.println("<!DOCTYPE html>");
                   client.println("<htlm>");
@@ -229,5 +279,39 @@ void loop(){
       client.stop();    
       Serial.println("Fechou o servidor");
    }  
+} 
+
+void setup() {
+  analogReference(INTERNAL);
+  pinMode(pinoBuzzer, OUTPUT);
+  pinMode(pinoLed, OUTPUT);
+  
+  Servo1.attach(pinoServo);
+  
+  // inicia modulo ethernet...
+  Ethernet.begin(mac,ip);
+  server.begin();
+  Serial.begin(9600);
+  Serial.println("iniciou"); 
+
+  myThreadServer.onRun(threadServer);
+  myThreadServer.setInterval(1);
+
+  myThreadMusica.onRun(tocaMusica);
+  myThreadMusica.setInterval(1);
+  
+
+}
+
+void loop(){
+   //if (myThreadMusica.shouldRun()) {
+   //   myThreadMusica.run(); 
+   //}
+   tocaMusica;  
+   if (myThreadServer.shouldRun()) {
+      myThreadServer.run(); 
+   }
+
+   
 }
 
