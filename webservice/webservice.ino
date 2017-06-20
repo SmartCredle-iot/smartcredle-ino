@@ -4,7 +4,7 @@
 #include <Ethernet.h>
 #include <SD.h>
 #include <SPI.h>
-#include <Servo.h>
+#include <Wire.h>
 
 int  c   =  3830;    // 261 Hz 
 int  d   =  3400;    // 294 Hz 
@@ -34,15 +34,18 @@ char req_index = 0; //variavel para ajudar a ler o HTTP_req;
 
 //Define os pinos
 const int pinoSensor = A0;
+const int pinoLM35   = A1;
+
 const int pinoBuzzer = 3;
 const int pinoTrig   = 5;
 const int pinoEcho   = 6;
-const int pinoServo  = 7;
+//const int pinoServo  = 7;
 const int pinoLed    = 8;
+
 
 Ultrasonic ultrasonic(pinoTrig, pinoEcho); //Verificar para trocar a porta...
 
-Servo Servo1; //Identifica um objeto do tipo Servo chamado Servo1
+//Servo Servo1; //Identifica um objeto do tipo Servo chamado Servo1
 
 Thread myThreadServer = Thread();
 Thread myThreadMusica = Thread();
@@ -53,7 +56,6 @@ int iBerco     = 0;
 int iStatusLed = 0;
 
 int Recebido; //Variável que armazenará o valor recebido pela serial
-int posicao; //Variável que armazenará as posições do servo
 
 char ComparaSTR(char *str, char *sFind){
   char found = 0;
@@ -98,14 +100,25 @@ int verificaBerco(){
    return resp;
 }
 
+float verificaTemperatura(){
+   return (float(analogRead(pinoLM35))*5/(1023))/0.01;  
+}
 
 void lerDados(EthernetClient novoCliente){
    //realiza a leitura do sensor
    novoCliente.print(verificaBerco());
    novoCliente.println("|");
+   novoCliente.print(iStatusLed);
+   novoCliente.println("|");
+   novoCliente.print(verificaTemperatura());
+   novoCliente.println("|");
 
- 
-   //espero receber algo como 0|1   
+
+   //Verifica se tem alguem no berço
+   //Status da LUZ.
+   //Temperatura no ambiente
+   
+   //espero receber algo como 0|1|20.3|   
 }
 
 void LimpaSTR(char *str, char iTamanho){
@@ -135,8 +148,7 @@ void playNote(char note, int duration) {
   }
 }
 
-void tocaMusica(){
-   Serial.println("iniciou");
+void loopTocarMusica(){
    if (iMusica == 0) { 
       char notes[] = "ccggaag ffeeddc ggffeed ggffeed ccggaag ffeeddc "; 
       int beats[]  = { 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 4 };
@@ -158,34 +170,30 @@ void tocaMusica(){
       iMusica = 0; 
       digitalWrite(pinoBuzzer, LOW);
    }
-
-   delay(500);  
-   Serial.println("final");
 }
 
-
-void ligaMotor(){  
-  
- for(posicao = 90; posicao<110; posicao+=5){
-    Servo1.write(posicao);
-    Serial.println(posicao);
-    delay(500);  
-  }
-  for(posicao = 110; posicao>=60; posicao-=5){
-    Servo1.write(posicao);
-    Serial.println(posicao);
-    delay(500);  
-  }
-  
-  for(posicao = 70; posicao<90; posicao+=5){
-    Servo1.write(posicao);
-    Serial.println(posicao);
-    delay(500);  
-  }
+void loopMovimentaBerco(){  
+   byte x = 0;
+   if (iBerco == 0){
+      iBerco = 1; 
+            
+      Wire.beginTransmission(8);     
+      Wire.write("1"); 
+      Wire.write(x);                
+      Wire.endTransmission();         
+      
+   } else {
+      iBerco = 0;
+       
+      Wire.beginTransmission(8);     
+      Wire.write("0"); 
+      Wire.write(x);                
+      Wire.endTransmission();    
+   }
    
 }
 
-void statusLed(){
+void loopStatusLed(){
    if (iStatusLed == 0){
       digitalWrite(pinoLed, HIGH); 
       iStatusLed = 1;
@@ -239,18 +247,18 @@ void threadServer(){
                //Trata as REQ dos cliente;
                if (ComparaSTR(HTTP_req, "ajax_lerDados")){
                   lerDados(client);                
-               } else if (ComparaSTR(HTTP_req, "ajax_statusMusica")){
-                  tocaMusica();                       
+               } else if (ComparaSTR(HTTP_req, "ajax_TocarMusica")){
+                  loopTocarMusica();                       
                } else if (ComparaSTR(HTTP_req, "ajax_statusBercario")){
                   if (verificaBerco()){
-                     Serial.println("ta no berco"); 
+                     Serial.println("ta no berco");   
                   } else {
                      Serial.println("nao ta no berco");                                             
                   }                                 
                } else if (ComparaSTR(HTTP_req, "ajax_statusLuz")){
-                  statusLed();              
+                  loopStatusLed();              
                } else if (ComparaSTR(HTTP_req, "ajax_movimentaBerco")){
-                  ligaMotor();               
+                  loopMovimentaBerco();               
                } else {                                 
                   client.println("<!DOCTYPE html>");
                   client.println("<htlm>");
@@ -285,21 +293,18 @@ void setup() {
   analogReference(INTERNAL);
   pinMode(pinoBuzzer, OUTPUT);
   pinMode(pinoLed, OUTPUT);
-  
-  Servo1.attach(pinoServo);
-  
+   
   // inicia modulo ethernet...
   Ethernet.begin(mac,ip);
   server.begin();
   Serial.begin(9600);
-  Serial.println("iniciou"); 
+
+  Wire.begin();
+  
+  Serial.println("iniciou Servidor"); 
 
   myThreadServer.onRun(threadServer);
-  myThreadServer.setInterval(1);
-
-  myThreadMusica.onRun(tocaMusica);
-  myThreadMusica.setInterval(1);
-  
+  myThreadServer.setInterval(1);  
 
 }
 
@@ -307,7 +312,7 @@ void loop(){
    //if (myThreadMusica.shouldRun()) {
    //   myThreadMusica.run(); 
    //}
-   tocaMusica;  
+
    if (myThreadServer.shouldRun()) {
       myThreadServer.run(); 
    }
